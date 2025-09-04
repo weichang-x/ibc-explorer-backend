@@ -1,0 +1,219 @@
+package utils
+
+import (
+	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/irisnet/ibc-explorer-backend/internal/app/constant"
+	"github.com/shopspring/decimal"
+	"github.com/sirupsen/logrus"
+)
+
+// Basename removes directory components
+// e.g., a => a, a.go => a.go, a/b/c.go => c.go
+func Basename(s string) string {
+	slash := strings.LastIndex(s, "/") // -1 if "/" not found
+	s = s[slash+1:]
+	return s
+}
+
+// PrefixName delete str after first slash
+// e.g., a/b/c => a, fds/dd => fds, c.go//11 => c.go
+func PrefixName(s string) string {
+	slash := strings.Index(s, "/") // -1 if "/" not found
+	if slash == -1 {
+		return s
+	}
+	s = s[:slash]
+	return s
+}
+
+// ParentPath delete str after last slash
+// e.g., a/b/c => a/b, fds/dd => fds, c.go//11 => c.go/
+func ParentPath(s string) string {
+	slash := strings.LastIndex(s, "/")
+	if slash == -1 {
+		return s
+	}
+	return s[:slash]
+}
+
+// RemoveFirstLevelPath delete str before slash
+// e.g., a/b/c => b/c, fds/dd => dd, c.go//11 => /11
+func RemoveFirstLevelPath(s string) string {
+	slash := strings.Index(s, "/")
+	if slash == -1 {
+		return s
+	}
+	return s[slash+1:]
+}
+
+func IsContain(sources []string, target string) bool {
+	for _, source := range sources {
+		if source == target {
+			return true
+		}
+	}
+	return false
+}
+
+func DistinctSliceStr(slice []string) []string {
+	set := make(map[string]int)
+	for _, v := range slice {
+		if v == "" {
+			continue
+		}
+		set[v] = 0
+	}
+
+	res := make([]string, 0, len(set))
+	for k, _ := range set {
+		res = append(res, k)
+	}
+	return res
+}
+
+func HttpGet(url string) (bz []byte, err error) {
+	http.DefaultClient.Timeout = time.Duration(30) * time.Second
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			time.Sleep(200 * time.Millisecond)
+		}
+		return nil, fmt.Errorf("StatusCode(%s) != 200, url: %s", resp.Status, url)
+	}
+
+	bz, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return
+}
+
+func HttpPost(url string, reqBody interface{}) (bz []byte, err error) {
+	reqBz := MarshalJsonIgnoreErr(reqBody)
+	reader := strings.NewReader(string(reqBz))
+	resp, err := http.Post(url, "application/json", reader)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("StatusCode(%s) != 200, url: %s", resp.Status, url)
+	}
+
+	bz, err = ioutil.ReadAll(resp.Body)
+	return bz, nil
+}
+
+func InArray(arr []string, e string) bool {
+	for _, v := range arr {
+		if v == e {
+			return true
+		}
+	}
+	return false
+}
+
+func Md5(s string) string {
+	h := md5.New()
+	h.Write([]byte(s))
+	cipherStr := h.Sum(nil)
+	return hex.EncodeToString(cipherStr)
+}
+
+func Sha256(s string) string {
+	h := sha256.New()
+	h.Write([]byte(s))
+	cipherStr := h.Sum(nil)
+	return hex.EncodeToString(cipherStr)
+}
+
+var (
+	// Denominations can be 3 ~ 128 characters long and support letters, followed by either
+	// a letter, a number or a separator ('/').
+	reDnmString = `[a-zA-Z][a-zA-Z0-9/-]{2,127}`
+)
+
+// ValidateDenom is the default validation function for Coin.Denom.
+func ValidateDenom(denom string) error {
+	reDnm := regexp.MustCompile(fmt.Sprintf(`^%s$`, reDnmString))
+	if !reDnm.MatchString(denom) {
+		return fmt.Errorf("invalid denom: %s", denom)
+	}
+	return nil
+}
+
+// IbcHash calculate denom hash by denom path
+//   - fullPath full fullPath, eg："transfer/channel-1/uiris", "uatom"
+func IbcHash(fullPath string) string {
+	if len(strings.Split(fullPath, "/")) == 1 {
+		return fullPath
+	}
+
+	hash := Sha256(fullPath)
+	return fmt.Sprintf("%s/%s", constant.IBCTokenPrefix, strings.ToUpper(hash))
+}
+
+func AmountToDecimal(amount string) decimal.Decimal {
+	if amount == constant.UnknownDenomAmount || amount == constant.ZeroDenomAmount || amount == "" {
+		return decimal.Zero
+	}
+	amountDecimal, err := decimal.NewFromString(amount)
+	if err != nil {
+		logrus.Errorf("amountToDecimal error, %v", err)
+		return decimal.Zero
+	}
+	return amountDecimal
+}
+
+func AddByDecimal(total, item string) (string, error) {
+	var (
+		totalValue, itemValue decimal.Decimal
+		err                   error
+	)
+	if total == "" {
+		totalValue = decimal.NewFromInt(0)
+	} else {
+		totalValue, err = decimal.NewFromString(total)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	if item == "" {
+		return totalValue.String(), nil
+	} else {
+		itemValue, err = decimal.NewFromString(item)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	totalValue = totalValue.Add(itemValue)
+	return totalValue.String(), nil
+}
+
+func CheckRegexString(str string) string {
+	fbsStr := []string{"\\", "$", "(", ")", "*", "+", ".", "[", "]", "?", "^", "{", "}", "|"}
+	for _, ch := range fbsStr {
+		if strings.Contains(str, ch) {
+			str = strings.Replace(str, ch, "\\"+ch, -1)
+		}
+	}
+	return str
+}

@@ -1,0 +1,59 @@
+package rest
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/irisnet/ibc-explorer-backend/internal/app/api/response"
+	"github.com/irisnet/ibc-explorer-backend/internal/app/errors"
+	"github.com/irisnet/ibc-explorer-backend/internal/app/model/vo"
+)
+
+type TokenController struct {
+}
+
+// List token page
+func (ctl *TokenController) List(c *gin.Context) {
+	var req vo.TokenListReq
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusOK, response.FailBadRequest(err))
+		return
+	}
+
+	var res interface{}
+	var err errors.Error
+	if req.UseCount {
+		res, err = tokenService.ListCount(&req)
+	} else {
+		res, err = tokenService.List(&req)
+	}
+
+	if err != nil {
+		c.JSON(http.StatusOK, response.FailError(err))
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(res))
+}
+
+// IBCTokenList token page
+func (ctl *TokenController) IBCTokenList(c *gin.Context) {
+	var req vo.IBCTokenListReq
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusOK, response.FailBadRequest(err))
+		return
+	}
+
+	var res interface{}
+	var err errors.Error
+	if req.UseCount {
+		res, err = tokenService.IBCTokenListCount(&req)
+	} else {
+		res, err = tokenService.IBCTokenList(&req)
+	}
+
+	if err != nil {
+		c.JSON(http.StatusOK, response.FailError(err))
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(res))
+}
